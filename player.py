@@ -4,13 +4,14 @@ import math
 import random
 
 from time import time
+from operator import itemgetter
 
 from fishing_game_core.game_tree import Node
 from fishing_game_core.player_utils import PlayerController
 from fishing_game_core.shared import ACTION_TO_STR
 from fishing_game_core.shared import TYPE_TO_SCORE
 
-TIME_LIMIT = 75 * 1e-3
+TIME_LIMIT = 55 * 1e-3
 
 
 class PLAYER:
@@ -74,87 +75,84 @@ class PlayerControllerMinimax(PlayerController):
         :rtype: str
         """
 
+        depth = 0
+        moves = []
+        flag = True
         self.start_t = time()
-        # best_move = 0
-        self.max_depth = 10
-        # while time() - self.start_t <= 0.05:
-        v, best_move = self.min_max(player=PLAYER.A, node=current_node, alpha=float('-inf'), beta=float('inf'))
-        # self.max_depth += 1
+        while flag:
+            v, m, flag = self.min_max(player=PLAYER.A, node=current_node, alpha=float('-inf'), beta=float('inf'), depth=depth)
+            if (m is not None): 
+                moves.append((v,m))
+            depth = depth+1
 
-        print(v)
+        if len(moves):
+            best_move = max(moves, key=itemgetter(0))[1]
+        else:
+            best_move = 0
+        
         return ACTION_TO_STR[best_move]
 
-    def min_max(self, player, node, alpha, beta, depth=0):
-        if time() - self.start_t > 0.05 or depth == self.max_depth:
-            return self.heuristic(node), node.move
+    def min_max(self, player, node, alpha, beta, depth):
+        if time() - self.start_t > TIME_LIMIT:
+            return self.heuristic(node), node.move, False
 
         children = node.compute_and_get_children()
         children.sort(key=self.heuristic, reverse=True)
 
-        if len(children) == 0:
-            scores = node.state.get_player_scores()
-            # return scores[0] - scores[1], node.move
-            return self.heuristic(node), node.move
+        if len(children) == 0 or depth == 0:
+            return self.heuristic(node), node.move, True
 
         best_move = None
         if player == PLAYER.A:
             v = float('-inf')
             for child in children:
-                child_v, child_move = self.min_max(PLAYER.B, child, alpha, beta, depth + 1)
+                child_v, child_m, _ = self.min_max(PLAYER.B, child, alpha, beta, depth - 1)
                 if child_v > v:
                     v = child_v
-                    best_move = child_move
+                    best_move = child_m
 
                 alpha = max(v, alpha)
-                if v >= beta:
+                if alpha >= beta:
                     break
 
-            return v, best_move
+            return v, best_move, True
+        
+        else: # player B
+            v = float('inf')
+            for child in children:
+                child_v, child_m, _ = self.min_max(PLAYER.A, child, alpha, beta, depth - 1)
+                if child_v < v:
+                    v = child_v
+                    best_move = child_m
 
-        v = float('inf')
-        for child in children:
-            child_v, child_move = self.min_max(PLAYER.A, child, alpha, beta, depth + 1)
-            if child_v < v:
-                v = child_v
-                best_move = child_move
+                beta = min(v, beta)
+                if beta <= alpha:
+                    break
 
-            beta = min(v, beta)
-            if v <= alpha:
-                break
-
-        return v, best_move
+            return v, best_move, True
 
     def heuristic(self, node):
         state = node.state
-        score = state.get_player_scores()  # [Player.A, Player.B]
+        score = state.get_player_scores()  # (Player.A, Player.B)
         hook = state.get_hook_positions()  # {idx: (x,y) ...}
         fish = state.get_fish_positions()  # {idx: (x,y) ...}
         fish_scores = state.get_fish_scores()
 
-        caught = state.get_caught()
-        # score_A = 0
+        if (len(fish) == 0):
+            return score[PLAYER.A] - score[PLAYER.B]
+        
+        score_a = score[PLAYER.A]
+        score_b = score[PLAYER.B]
+        for f in fish:
+            distA = self.distance(fish[f], hook[0])
+            distB = self.distance(fish[f], hook[1])
 
-        scr = 0
-        score_a = 0
-        score_b = 0 if caught[1] is None else TYPE_TO_SCORE[caught[1]]
-
-        if caught[0] is None:
-            scr = float('-inf')
-            for f in fish:
-                if fish_scores[f] > 0:
-                    a_dist = self.distance(fish[f], hook[0])
-                    b_dist = self.distance(fish[f], hook[1]) if caught[1] is None else 0
-                    # b_dist = self.distance(fish[f], hook[1])
-                    scr = max(scr, (b_dist - a_dist) + (fish_scores[f] * 0.1))
-        else:
-            score_a = TYPE_TO_SCORE[caught[0]]
-
-        return score[0] - score[1] + scr * 2 + score_a - score_b
-        # return score[0] - (score_A + score[1] + 0.2 * dist)
+            score_a += fish_scores[f] * math.exp(-distA)
+            score_b += fish_scores[f] * math.exp(-distB)
+        
+        return score_a - score_b
 
     def distance(self, fish, hook):
-        # dx = (hook[0] - fish[0]) ** 2
-        # dy = (hook[1] - fish[1]) ** 2
-        dx = (hook[0] - fish[0])
-        dy = (hook[1] - fish[1])
-        return abs(dx + dy)
+        dx = abs(fish[0] - hook[0])
+        dy = abs(fish[1] - hook[1])
+        return dx + dy
