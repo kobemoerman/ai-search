@@ -42,7 +42,7 @@ class PlayerControllerMinimax(PlayerController):
     def __init__(self):
         super(PlayerControllerMinimax, self).__init__()
         self.start_t = 0
-        self.max_depth = 0
+        self.avg_depth = 0
 
     def player_loop(self):
         """
@@ -79,17 +79,22 @@ class PlayerControllerMinimax(PlayerController):
         moves = []
         flag = True
         self.start_t = time()
+
         while flag:
-            v, m, flag = self.min_max(player=PLAYER.A, node=current_node, alpha=float('-inf'), beta=float('inf'), depth=depth)
-            if (m is not None): 
-                moves.append((v,m))
-            depth = depth+1
+            v, m, flag = self.min_max(player=PLAYER.A, node=current_node, alpha=float('-inf'), beta=float('inf'),
+                                      depth=depth)
+            if m is not None:
+                moves.append((v, m))
+            depth += 1
 
         if len(moves):
             best_move = max(moves, key=itemgetter(0))[1]
         else:
             best_move = 0
-        
+
+        # self.avg_depth = (self.avg_depth + depth) / 2
+        # print(self.avg_depth)
+
         return ACTION_TO_STR[best_move]
 
     def min_max(self, player, node, alpha, beta, depth):
@@ -97,7 +102,7 @@ class PlayerControllerMinimax(PlayerController):
             return self.heuristic(node), node.move, False
 
         children = node.compute_and_get_children()
-        children.sort(key=self.heuristic, reverse=True)
+        children.sort(key=self.heuristic, reverse=player == PLAYER.A)
 
         if len(children) == 0 or depth == 0:
             return self.heuristic(node), node.move, True
@@ -116,8 +121,8 @@ class PlayerControllerMinimax(PlayerController):
                     break
 
             return v, best_move, True
-        
-        else: # player B
+
+        else:  # player B
             v = float('inf')
             for child in children:
                 child_v, child_m, _ = self.min_max(PLAYER.A, child, alpha, beta, depth - 1)
@@ -138,21 +143,29 @@ class PlayerControllerMinimax(PlayerController):
         fish = state.get_fish_positions()  # {idx: (x,y) ...}
         fish_scores = state.get_fish_scores()
 
-        if (len(fish) == 0):
-            return score[PLAYER.A] - score[PLAYER.B]
-        
         score_a = score[PLAYER.A]
         score_b = score[PLAYER.B]
+
+        best_fish_score = 0
         for f in fish:
-            distA = self.distance(fish[f], hook[0])
-            distB = self.distance(fish[f], hook[1])
+            dist_a = self.distance(fish[f], hook[0], hook[1])
+            dist_b = self.distance(fish[f], hook[1], hook[0])
 
-            score_a += fish_scores[f] * math.exp(-distA)
-            score_b += fish_scores[f] * math.exp(-distB)
-        
-        return score_a - score_b
+            # score_a += fish_scores[f] * math.exp(-dist_a)
+            # score_b += fish_scores[f] * math.exp(-dist_b)
+            # ToDo - improve
+            f_a = fish_scores[f] / (dist_a + 1) if fish_scores[f] > 0 else 0
+            f_b = fish_scores[f] / (dist_b + 1) if fish_scores[f] < 0 else 0
+            best_fish_score = max(f_a + f_b, best_fish_score)
 
-    def distance(self, fish, hook):
-        dx = abs(fish[0] - hook[0])
+        return score_a - score_b + best_fish_score
+
+    def distance(self, fish, hook, opponent_hook):
+        if hook[0] < opponent_hook[0] < fish[0]:
+            dx = hook[0] + (20 - fish[0])
+        elif hook[0] > opponent_hook[0] > fish[0]:
+            dx = (20 - hook[0]) + fish[0]
+        else:
+            dx = abs(fish[0] - hook[0])
         dy = abs(fish[1] - hook[1])
         return dx + dy
