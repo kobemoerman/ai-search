@@ -12,7 +12,8 @@ from fishing_game_core.player_utils import PlayerController
 from fishing_game_core.shared import ACTION_TO_STR
 from fishing_game_core.shared import TYPE_TO_SCORE
 
-TIME_LIMIT = 55 * 1e-3
+TIME_LIMIT  = 55 * 1e-3
+DEPTH_LIMIT = 8
 
 class h_state(NamedTuple):
     value: float
@@ -79,21 +80,21 @@ class PlayerControllerMinimax(PlayerController):
         :rtype: str
         """
 
-        depth = 0
-        moves = []
-        flag = True
+        flag = False
+        a = float('-inf')
+        b = float('inf')
         self.start_t = time()
         self.encoded = dict()
 
-        while flag:
-            v, m, flag = self.alpha_beta(player=PLAYER.A, 
-                                      node=current_node, 
-                                      alpha=float('-inf'), 
-                                      beta=float('inf'),
-                                      depth=depth)
+        moves = []
+        for depth in range(1, DEPTH_LIMIT):
+            v, m, flag = self.alpha_beta(player=PLAYER.A, node=current_node, alpha=a,  beta=b, depth=depth)
+
             if m is not None:
                 moves.append((v, m))
-            depth += 1
+
+            if flag:
+                break
 
         if len(moves):
             best_move = max(moves, key=itemgetter(0))[1]
@@ -102,51 +103,50 @@ class PlayerControllerMinimax(PlayerController):
 
         return ACTION_TO_STR[best_move]
 
-    def alpha_beta(self, player, node, alpha, beta, depth):
+    def alpha_beta(self, player, node, alpha, beta, depth, move=None):
+        node = self.repeated_state(node, player)
+        
         if time() - self.start_t > TIME_LIMIT:
-            return self.heuristic(node), node.move, False
-
-        key = self.hash_state(node, player)
-
-        if key in self.encoded and self.encoded.get(key).depth >= depth:
-            return self.encoded.get(key).value, node.move, True
+            v = self.heuristic(node)
+            return v, move, True
 
         children = node.compute_and_get_children()
         children.sort(key=self.heuristic, reverse=(player==PLAYER.A))
 
-        if len(children) == 0 or depth == 0:
-            return self.heuristic(node), node.move, True
-
-        best_move = None
-        if player == PLAYER.A:
+        if depth == 0 or len(children) == 0:
+            v = self.heuristic(node)
+            return v, move, False
+        
+        if player == PLAYER.A: # PLAYER A
             v = float('-inf')
             for child in children:
-                child_v, child_m, _ = self.alpha_beta(PLAYER.B, child, alpha, beta, depth - 1)
+                child_v, _, _ = self.alpha_beta(PLAYER.B, child, alpha, beta, depth-1, child.move)
                 if child_v > v:
-                    v = child_v
-                    best_move = child_m
-
+                    v, move = child_v, child.move
                 alpha = max(v, alpha)
                 if alpha >= beta:
                     break
-            
-            self.encoded.update({key:h_state(v, depth)})
-            return v, best_move, True
+            return v, move, False
 
-        else:  # player B
+        else: # PLAYER B
             v = float('inf')
             for child in children:
-                child_v, child_m, _ = self.alpha_beta(PLAYER.A, child, alpha, beta, depth - 1)
+                child_v, _, _ = self.alpha_beta(PLAYER.A, child, alpha, beta, depth-1, child.move)
                 if child_v < v:
-                    v = child_v
-                    best_move = child_m
-
+                    v, move = child_v, child.move
                 beta = min(v, beta)
-                if beta <= alpha:
+                if alpha >= beta:
                     break
+            return v, move, False
 
-            self.encoded.update({key:h_state(v, depth)})
-            return v, best_move, True
+    def repeated_state(self, node, player):
+        key = self.hash_state(node.state, player)
+        n = self.encoded.get(key)
+        if n is None:
+            n = node
+            self.encoded[key] = n
+        return n
+
 
     def heuristic(self, node):
         state = node.state
@@ -185,15 +185,18 @@ class PlayerControllerMinimax(PlayerController):
         return dx + dy
         
 
-    def hash_state(self, node, player):
+    def hash_state(self, state, player):
         _dict = dict()
-        state = node.state
+        
         hook  = state.get_hook_positions()  # {idx: (x,y) ...}
         fish  = state.get_fish_positions()  # {idx: (x,y) ...}
-        score = state.get_fish_scores()
+        fish_score = state.get_fish_scores()
 
-        for pos, value in zip(fish, score):
-            _dict.update({fish.get(pos):score.get(value)})
+        for pos, value in zip(fish, fish_score):
+            _dict.update({fish.get(pos):fish_score.get(value)})
 
-        return str(player)+str(hook)+str(_dict)
+        player_score = state.player_scores
+        score = player_score[0] - player_score[1]
+
+        return str(player)+str(score)+str(hook)+str(_dict)
         
