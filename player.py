@@ -13,7 +13,6 @@ from fishing_game_core.shared import ACTION_TO_STR
 from fishing_game_core.shared import TYPE_TO_SCORE
 
 TIME_LIMIT = 55 * 1e-3
-_sample_ = random.sample(range(1, 1 << 32 - 1), 2)
 
 class h_state(NamedTuple):
     value: float
@@ -62,7 +61,7 @@ class PlayerControllerMinimax(PlayerController):
             msg = self.receiver()
 
             # Create the root node of the game tree
-            node = Node(message=msg, player=0)
+            node = Node(message=msg, player=PLAYER.A)
 
             # Possible next moves: "stay", "left", "right", "up", "down"
             best_move = self.search_best_next_move(current_node=node)
@@ -156,8 +155,8 @@ class PlayerControllerMinimax(PlayerController):
         fish = state.get_fish_positions()  # {idx: (x,y) ...}
         fish_scores = state.get_fish_scores()
 
-        score_a = score[0]
-        score_b = score[1]
+        score_a = score[PLAYER.A]
+        score_b = score[PLAYER.B]
 
         best_fish_score = 0
         for f in fish:
@@ -184,39 +183,17 @@ class PlayerControllerMinimax(PlayerController):
             dx = abs(fish[0] - hook[0])
 
         return dx + dy
-    
-    def relative_distance(self, x0, x1):
-        if x0 > x1:
-            return x1-x0+20
         
-        return x1-x0
 
     def hash_state(self, node, player):
         _dict = dict()
-        key = 0
         state = node.state
         hook  = state.get_hook_positions()  # {idx: (x,y) ...}
         fish  = state.get_fish_positions()  # {idx: (x,y) ...}
         score = state.get_fish_scores()
-        player_score = state.get_player_scores()
-
-        # key = key^(player_score[0]-player_score[1])
-        # key = key^player
-
-        # key = key^self.relative_distance(hook[0][0], hook[1][0])
-
-        # for pos, value in zip(fish, fish_score):
-        #     x, y = fish.get(pos)
-        #     key = key ^ (x+y)
-        #     key = key ^ fish_score.get(value)
-
-        # return key
-
 
         for pos, value in zip(fish, score):
             _dict.update({fish.get(pos):score.get(value)})
 
         return str(player)+str(hook)+str(_dict)
         
-
-
