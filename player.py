@@ -4,6 +4,7 @@ import math
 import random
 
 from time import time
+from typing import NamedTuple
 from operator import itemgetter
 
 from fishing_game_core.game_tree import Node
@@ -12,7 +13,11 @@ from fishing_game_core.shared import ACTION_TO_STR
 from fishing_game_core.shared import TYPE_TO_SCORE
 
 TIME_LIMIT = 55 * 1e-3
+_sample_ = random.sample(range(1, 1 << 32 - 1), 2)
 
+class h_state(NamedTuple):
+    value: float
+    depth: int
 
 class PLAYER:
     A = 0
@@ -57,7 +62,7 @@ class PlayerControllerMinimax(PlayerController):
             msg = self.receiver()
 
             # Create the root node of the game tree
-            node = Node(message=msg, player=PLAYER.A)
+            node = Node(message=msg, player=0)
 
             # Possible next moves: "stay", "left", "right", "up", "down"
             best_move = self.search_best_next_move(current_node=node)
@@ -79,9 +84,13 @@ class PlayerControllerMinimax(PlayerController):
         moves = []
         flag = True
         self.start_t = time()
+        self.encoded = dict()
 
         while flag:
-            v, m, flag = self.min_max(player=PLAYER.A, node=current_node, alpha=float('-inf'), beta=float('inf'),
+            v, m, flag = self.alpha_beta(player=PLAYER.A, 
+                                      node=current_node, 
+                                      alpha=float('-inf'), 
+                                      beta=float('inf'),
                                       depth=depth)
             if m is not None:
                 moves.append((v, m))
@@ -90,19 +99,21 @@ class PlayerControllerMinimax(PlayerController):
         if len(moves):
             best_move = max(moves, key=itemgetter(0))[1]
         else:
-            best_move = 0
-
-        # self.avg_depth = (self.avg_depth + depth) / 2
-        # print(self.avg_depth)
+            best_move = random.randrange(5)
 
         return ACTION_TO_STR[best_move]
 
-    def min_max(self, player, node, alpha, beta, depth):
+    def alpha_beta(self, player, node, alpha, beta, depth):
         if time() - self.start_t > TIME_LIMIT:
             return self.heuristic(node), node.move, False
 
+        key = self.hash_state(node, player)
+
+        if key in self.encoded and self.encoded.get(key).depth >= depth:
+            return self.encoded.get(key).value, node.move, True
+
         children = node.compute_and_get_children()
-        children.sort(key=self.heuristic, reverse=player == PLAYER.A)
+        children.sort(key=self.heuristic, reverse=(player==PLAYER.A))
 
         if len(children) == 0 or depth == 0:
             return self.heuristic(node), node.move, True
@@ -111,7 +122,7 @@ class PlayerControllerMinimax(PlayerController):
         if player == PLAYER.A:
             v = float('-inf')
             for child in children:
-                child_v, child_m, _ = self.min_max(PLAYER.B, child, alpha, beta, depth - 1)
+                child_v, child_m, _ = self.alpha_beta(PLAYER.B, child, alpha, beta, depth - 1)
                 if child_v > v:
                     v = child_v
                     best_move = child_m
@@ -119,13 +130,14 @@ class PlayerControllerMinimax(PlayerController):
                 alpha = max(v, alpha)
                 if alpha >= beta:
                     break
-
+            
+            self.encoded.update({key:h_state(v, depth)})
             return v, best_move, True
 
         else:  # player B
             v = float('inf')
             for child in children:
-                child_v, child_m, _ = self.min_max(PLAYER.A, child, alpha, beta, depth - 1)
+                child_v, child_m, _ = self.alpha_beta(PLAYER.A, child, alpha, beta, depth - 1)
                 if child_v < v:
                     v = child_v
                     best_move = child_m
@@ -134,6 +146,7 @@ class PlayerControllerMinimax(PlayerController):
                 if beta <= alpha:
                     break
 
+            self.encoded.update({key:h_state(v, depth)})
             return v, best_move, True
 
     def heuristic(self, node):
@@ -143,29 +156,67 @@ class PlayerControllerMinimax(PlayerController):
         fish = state.get_fish_positions()  # {idx: (x,y) ...}
         fish_scores = state.get_fish_scores()
 
-        score_a = score[PLAYER.A]
-        score_b = score[PLAYER.B]
+        score_a = score[0]
+        score_b = score[1]
 
         best_fish_score = 0
         for f in fish:
             dist_a = self.distance(fish[f], hook[0], hook[1])
             dist_b = self.distance(fish[f], hook[1], hook[0])
 
-            # score_a += fish_scores[f] * math.exp(-dist_a)
-            # score_b += fish_scores[f] * math.exp(-dist_b)
+            # score_a = fish_scores[f] * math.exp(-dist_a)
+            # score_b = fish_scores[f] * math.exp(-dist_b)
             # ToDo - improve
-            f_a = fish_scores[f] / (dist_a + 1) if fish_scores[f] > 0 else 0
-            f_b = fish_scores[f] / (dist_b + 1) if fish_scores[f] < 0 else 0
+            f_a = max(0, fish_scores[f] / (dist_a + 1))
+            f_b = min(0, fish_scores[f] / (dist_b + 1))
             best_fish_score = max(f_a + f_b, best_fish_score)
 
         return score_a - score_b + best_fish_score
 
     def distance(self, fish, hook, opponent_hook):
+        dy = abs(fish[1] - hook[1])
+
         if hook[0] < opponent_hook[0] < fish[0]:
             dx = hook[0] + (20 - fish[0])
         elif hook[0] > opponent_hook[0] > fish[0]:
             dx = (20 - hook[0]) + fish[0]
         else:
             dx = abs(fish[0] - hook[0])
-        dy = abs(fish[1] - hook[1])
+
         return dx + dy
+    
+    def relative_distance(self, x0, x1):
+        if x0 > x1:
+            return x1-x0+20
+        
+        return x1-x0
+
+    def hash_state(self, node, player):
+        _dict = dict()
+        key = 0
+        state = node.state
+        hook  = state.get_hook_positions()  # {idx: (x,y) ...}
+        fish  = state.get_fish_positions()  # {idx: (x,y) ...}
+        score = state.get_fish_scores()
+        player_score = state.get_player_scores()
+
+        # key = key^(player_score[0]-player_score[1])
+        # key = key^player
+
+        # key = key^self.relative_distance(hook[0][0], hook[1][0])
+
+        # for pos, value in zip(fish, fish_score):
+        #     x, y = fish.get(pos)
+        #     key = key ^ (x+y)
+        #     key = key ^ fish_score.get(value)
+
+        # return key
+
+
+        for pos, value in zip(fish, score):
+            _dict.update({fish.get(pos):score.get(value)})
+
+        return str(player)+str(hook)+str(_dict)
+        
+
+
