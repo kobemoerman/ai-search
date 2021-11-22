@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import sys
-import math
 import random
 
 from time import time
@@ -14,10 +12,6 @@ from fishing_game_core.shared import TYPE_TO_SCORE
 
 TIME_LIMIT  = 55 * 1e-3
 DEPTH_LIMIT = 8
-
-class h_state(NamedTuple):
-    value: float
-    depth: int
 
 class PLAYER:
     A = 0
@@ -103,24 +97,24 @@ class PlayerControllerMinimax(PlayerController):
 
         return ACTION_TO_STR[best_move]
 
-    def alpha_beta(self, player, node, alpha, beta, depth, move=None):
+    def alpha_beta(self, player, node, alpha, beta, depth):
         node = self.repeated_state(node, player)
         
         if time() - self.start_t > TIME_LIMIT:
             v = self.heuristic(node)
-            return v, move, True
+            return v, node.move, True
 
         children = node.compute_and_get_children()
         children.sort(key=self.heuristic, reverse=(player==PLAYER.A))
 
         if depth == 0 or len(children) == 0:
             v = self.heuristic(node)
-            return v, move, False
+            return v, node.move, False
         
         if player == PLAYER.A: # PLAYER A
             v = float('-inf')
             for child in children:
-                child_v, _, _ = self.alpha_beta(PLAYER.B, child, alpha, beta, depth-1, child.move)
+                child_v, _, _ = self.alpha_beta(PLAYER.B, child, alpha, beta, depth-1)
                 if child_v > v:
                     v, move = child_v, child.move
                 alpha = max(v, alpha)
@@ -131,7 +125,7 @@ class PlayerControllerMinimax(PlayerController):
         else: # PLAYER B
             v = float('inf')
             for child in children:
-                child_v, _, _ = self.alpha_beta(PLAYER.A, child, alpha, beta, depth-1, child.move)
+                child_v, _, _ = self.alpha_beta(PLAYER.A, child, alpha, beta, depth-1)
                 if child_v < v:
                     v, move = child_v, child.move
                 beta = min(v, beta)
@@ -141,11 +135,11 @@ class PlayerControllerMinimax(PlayerController):
 
     def repeated_state(self, node, player):
         key = self.hash_state(node.state, player)
-        n = self.encoded.get(key)
-        if n is None:
-            n = node
-            self.encoded[key] = n
-        return n
+        
+        if self.encoded.get(key) is None:
+            self.encoded[key] = node
+
+        return self.encoded.get(key)
 
 
     def heuristic(self, node):
@@ -163,14 +157,14 @@ class PlayerControllerMinimax(PlayerController):
             dist_a = self.distance(fish[f], hook[0], hook[1])
             dist_b = self.distance(fish[f], hook[1], hook[0])
 
-            # score_a = fish_scores[f] * math.exp(-dist_a)
-            # score_b = fish_scores[f] * math.exp(-dist_b)
+            best_fish_score += fish_scores[f] / (dist_a + .1)
+            best_fish_score -= fish_scores[f] / (dist_b + .1)
             # ToDo - improve
-            f_a = max(0, fish_scores[f] / (dist_a + 1))
-            f_b = min(0, fish_scores[f] / (dist_b + 1))
-            best_fish_score = max(f_a + f_b, best_fish_score)
+            # f_a = max(0, fish_scores[f] / (dist_a + 1))
+            # f_b = min(0, fish_scores[f] / (dist_b + 1))
+            # best_fish_score = max(f_a + f_b, best_fish_score)
 
-        return score_a - score_b + best_fish_score
+        return (score_a - score_b) + best_fish_score
 
     def distance(self, fish, hook, opponent_hook):
         dy = abs(fish[1] - hook[1])
@@ -186,17 +180,16 @@ class PlayerControllerMinimax(PlayerController):
         
 
     def hash_state(self, state, player):
-        _dict = dict()
+        fish_hash = {}
         
         hook  = state.get_hook_positions()  # {idx: (x,y) ...}
         fish  = state.get_fish_positions()  # {idx: (x,y) ...}
         fish_score = state.get_fish_scores()
 
         for pos, value in zip(fish, fish_score):
-            _dict.update({fish.get(pos):fish_score.get(value)})
+            fish_hash.update({fish.get(pos):fish_score.get(value)})
 
-        player_score = state.player_scores
-        score = player_score[0] - player_score[1]
+        score = state.player_scores[0] - state.player_scores[1]
 
-        return str(player)+str(score)+str(hook)+str(_dict)
+        return str(player)+str(score)+str(hook)+str(fish_hash)
         
